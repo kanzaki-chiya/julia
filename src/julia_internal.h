@@ -221,6 +221,9 @@ static uv_loop_t *const unused_uv_loop_arg = (uv_loop_t *)0xBAD10;
 extern jl_mutex_t jl_uv_mutex;
 extern _Atomic(int) jl_uv_n_waiters;
 
+// whether the current task holds `lock`
+int jl_mutex_held(jl_mutex_t *lock) JL_NOTSAFEPOINT;
+
 // Global data structures for accessing symbols and other globals
 #include "jl_internal_data.inc"
 
