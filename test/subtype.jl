@@ -3680,3 +3680,36 @@ end
         @test A != B
     end
 end
+
+# the cheap disjointness check run before type intersection when methods are added
+@testset "jl_sig_args_obviously_disjoint" begin
+    disjoint(a, b) = ccall(:jl_sig_args_obviously_disjoint, Cint, (Any, Any), a, b) != 0
+    f = typeof(identity)
+    for (a, b, expected) in Any[
+            (Tuple{f, Type{Int8}, Type{UInt8}}, Tuple{f, Core.TypeEgal{Int64}, Core.TypeEgal{Float64}}, true),
+            (Tuple{f, Type{Int8}}, Tuple{f, Vector{Int}}, true),
+            (Tuple{f, Type{T}} where T<:Integer, Tuple{f, Type{Int}}, false),
+            (Tuple{f, Type{T}} where T<:AbstractFloat, Tuple{f, Type{Int}}, true),
+            (Tuple{f, Type{T}} where T, Tuple{f, DataType}, false),
+            (Tuple{f, IO, Vector{Int8}}, Tuple{f, IOBuffer, Vector{String}}, true),
+            (Tuple{f, IO, Vector{T}} where T, Tuple{f, IOBuffer, Vector{String}}, false),
+            (Tuple{f, IO, Array{T,2}} where T, Tuple{f, IOBuffer, Vector{String}}, true),
+            (Tuple{f, IO, Array{T,N}} where {T,N}, Tuple{f, IOBuffer, Vector{String}}, false),
+            (Tuple{f, Union{Int8,UInt8}}, Tuple{f, Int}, true),
+            (Tuple{f, Union{Int8,Int}}, Tuple{f, Int}, false),
+            (Tuple{f, Vector{<:Integer}}, Tuple{f, Vector{Int}}, false),
+            (Tuple{f, Vector{<:AbstractFloat}}, Tuple{f, Vector{Int}}, true),
+            (Tuple{f, Val{1}}, Tuple{f, Val{1.0}}, true),
+            (Tuple{f, Val{:a}}, Tuple{f, Val{Int}}, true),
+            (Tuple{f, Val{N}} where N, Tuple{f, Val{Int}}, false),
+            (Tuple{f, Int}, Tuple{f, Int, Int}, true),
+            (Tuple{f, Vararg{Int}}, Tuple{f, Int, Int}, false),
+            (Tuple{f, T, T} where T<:AbstractString, Tuple{f, Int, Nothing}, true),
+            (Tuple{f, Ref{Union{}}}, Tuple{f, Ref{Int}}, false),
+            (Tuple{f, AbstractVector}, Tuple{f, AbstractDict}, true),
+            (Tuple{f, AbstractVector}, Tuple{f, DenseArray}, false)]
+        @test disjoint(a, b) == expected
+        @test disjoint(b, a) == expected
+        disjoint(a, b) && @test typeintersect(a, b) === Union{}
+    end
+end

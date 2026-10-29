@@ -3012,7 +3012,8 @@ static void _typename_invalidate_backedges(jl_typename_t *tn, int explct, void *
         JL_GC_PROMISE_ROOTED(backedgetyp);
         JL_GC_PROMISE_ROOTED(callers);
         int missing = 0;
-        if (jl_type_intersection2(backedgetyp, (jl_value_t*)env->type, env->isect, env->isect2)) {
+        if (!jl_sig_args_obviously_disjoint(backedgetyp, (jl_value_t*)env->type) &&
+            jl_type_intersection2(backedgetyp, (jl_value_t*)env->type, env->isect, env->isect2)) {
             // See if the intersection was actually already fully
             // covered, but that the new method is ambiguous.
             //  -> no previous method: now there is one, need to update the missing edge
@@ -3870,6 +3871,8 @@ static jl_genericmemory_t *activate_against_methods(struct activate_env *env, jl
             jl_method_instance_t *mi = jl_atomic_load_relaxed(&data[i]);
             if ((jl_value_t*)mi == jl_nothing)
                 continue;
+            if (jl_sig_args_obviously_disjoint(type, mi->specTypes))
+                continue; // most specializations share no argument type with the new method
             if (jl_type_intersection2(type, mi->specTypes, &isect, &isect2)) {
                 // Replacing a method--see if this really was the selected method previously
                 // over the intersection (not ambiguous) and the new method will be selected now (morespec).

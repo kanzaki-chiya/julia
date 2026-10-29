@@ -693,6 +693,8 @@ static int jl_typemap_intersection_node_visitor(jl_typemap_entry_t *ml, struct t
         if (closure->entry_filter && !closure->entry_filter(ml, closure))
             continue;
         int nonempty;
+        if (closure->emptiness_only && jl_sig_args_obviously_disjoint(closure->type, (jl_value_t*)ml->sig))
+            continue;
         if (closure->emptiness_only) {
             // The callback consumes only the match verdict and `issubty`; skip
             // materializing the intersection type and the typevar environment.

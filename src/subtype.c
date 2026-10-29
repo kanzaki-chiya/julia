@@ -798,6 +798,146 @@ static int datatype_may_contain_types(jl_datatype_t *d) JL_NOTSAFEPOINT
     return 0;
 }
 
+// Whether no type can be a subtype of both datatypes `a` and `b`: with single
+// inheritance, that holds when neither has the other's typename among its supertypes.
+// 0 when unsure (a supertype not yet set).
+static int datatypes_unrelated(jl_datatype_t *a, jl_datatype_t *b) JL_NOTSAFEPOINT
+{
+    if (a->name == b->name)
+        return 0;
+    if (b->isconcretetype) { // only `b` itself is below a concrete `b`: walk its chain alone
+        jl_datatype_t *c = a;
+        a = b;
+        b = c;
+    }
+    jl_datatype_t *t = a;
+    while (t != jl_any_type) {
+        t = t->super;
+        if (t == NULL)
+            return 0;
+        if (t->name == b->name)
+            return 0;
+    }
+    if (a->isconcretetype)
+        return 1;
+    t = b;
+    while (t != jl_any_type) {
+        t = t->super;
+        if (t == NULL)
+            return 0;
+        if (t->name == a->name)
+            return 0;
+    }
+    return 1;
+}
+
+// The set of values an argument declaration admits, as a datatype or union where possible:
+// a typevar stands for its upper bound, and a `where` for its body (with free variables).
+static jl_value_t *arg_bound(jl_value_t *x) JL_NOTSAFEPOINT
+{
+    while (1) {
+        if (jl_is_typevar(x))
+            x = ((jl_tvar_t*)x)->ub;
+        else if (jl_is_unionall(x))
+            x = ((jl_unionall_t*)x)->body;
+        else
+            return x;
+    }
+}
+
+// Whether the type parameters `x` and `y` (in the same invariant position) can never be
+// the same: two different plain values, a value and a type, or two types whose bounds
+// are unrelated datatypes. 0 when unsure.
+static int type_params_never_equal(jl_value_t *x, jl_value_t *y) JL_NOTSAFEPOINT
+{
+    if (x == y)
+        return 0;
+    int tvx = jl_is_typevar(x), tvy = jl_is_typevar(y);
+    if (tvx && tvy)
+        return 0;
+    int vx = !tvx && !jl_is_type(x), vy = !tvy && !jl_is_type(y);
+    if (vx || vy) {
+        if (tvx || tvy)
+            return 0; // a typevar may stand for a value
+        return vx && vy ? !jl_egal(x, y) : 1;
+    }
+    jl_value_t *bx = arg_bound(x), *by = arg_bound(y);
+    if (!jl_is_datatype(bx) || !jl_is_datatype(by) || bx == (jl_value_t*)jl_any_type || by == (jl_value_t*)jl_any_type)
+        return 0;
+    return datatypes_unrelated((jl_datatype_t*)bx, (jl_datatype_t*)by);
+}
+
+// Whether the declared argument types `x` and `y` (from two signatures) admit no common
+// value. Sound but incomplete: 0 when unsure.
+static int arg_types_disjoint(jl_value_t *x, jl_value_t *y, int depth) JL_NOTSAFEPOINT
+{
+    if (depth > 4)
+        return 0;
+    jl_value_t *bx = arg_bound(x), *by = arg_bound(y);
+    if (bx == by || bx == (jl_value_t*)jl_any_type || by == (jl_value_t*)jl_any_type)
+        return 0;
+    if (jl_is_uniontype(bx))
+        return arg_types_disjoint(((jl_uniontype_t*)bx)->a, by, depth + 1) &&
+               arg_types_disjoint(((jl_uniontype_t*)bx)->b, by, depth + 1);
+    if (jl_is_uniontype(by))
+        return arg_types_disjoint(bx, ((jl_uniontype_t*)by)->a, depth + 1) &&
+               arg_types_disjoint(bx, ((jl_uniontype_t*)by)->b, depth + 1);
+    int tx = jl_is_some_Type(bx), ty = jl_is_some_Type(by);
+    if (tx && ty) {
+        // `Type{A}` and `Type{B}` share a value only if `A` and `B` can be the same type;
+        // two typevars could both be `Union{}`
+        jl_value_t *px = jl_some_Type_T(bx), *py = jl_some_Type_T(by);
+        if (jl_is_typevar(px) && jl_is_typevar(py))
+            return 0;
+        return type_params_never_equal(px, py);
+    }
+    if (tx || ty) { // only a datatype that may hold types can share a value with a `Type{}`
+        jl_value_t *d = tx ? by : bx;
+        return jl_is_datatype(d) && !datatype_may_contain_types((jl_datatype_t*)d);
+    }
+    if (!jl_is_datatype(bx) || !jl_is_datatype(by))
+        return 0;
+    jl_datatype_t *dx = (jl_datatype_t*)bx, *dy = (jl_datatype_t*)by;
+    if (dx->name != dy->name)
+        return datatypes_unrelated(dx, dy);
+    if (dx->name == jl_tuple_typename)
+        return 0;
+    // the same type constructor: its parameters are invariant
+    size_t i, np = jl_nparams(dx);
+    if (np != jl_nparams(dy))
+        return 0;
+    for (i = 0; i < np; i++) {
+        if (type_params_never_equal(jl_tparam(dx, i), jl_tparam(dy, i)))
+            return 1;
+    }
+    return 0;
+}
+
+// A cheap, sound test that the signatures `a` and `b` cannot intersect: different
+// fixed arities, or some argument position whose two declarations admit no common value.
+// Returns 0 whenever it cannot tell.
+JL_DLLEXPORT int jl_sig_args_obviously_disjoint(jl_value_t *a, jl_value_t *b) JL_NOTSAFEPOINT
+{
+    a = jl_unwrap_unionall(a);
+    b = jl_unwrap_unionall(b);
+    if (!jl_is_tuple_type(a) || !jl_is_tuple_type(b))
+        return 0;
+    size_t na = jl_nparams(a), nb = jl_nparams(b);
+    int vaa = na > 0 && jl_is_vararg(jl_tparam(a, na - 1));
+    int vab = nb > 0 && jl_is_vararg(jl_tparam(b, nb - 1));
+    if (!vaa && !vab && na != nb)
+        return 1;
+    size_t n = na < nb ? na : nb;
+    for (size_t i = 0; i < n; i++) {
+        jl_value_t *ai = jl_tparam(a, i), *bi = jl_tparam(b, i);
+        if (jl_is_vararg(ai) || jl_is_vararg(bi))
+            break;
+        if (ai != bi && arg_types_disjoint(ai, bi, 0))
+            return 1;
+    }
+    return 0;
+}
+
 int obviously_disjoint(jl_value_t *a, jl_value_t *b, int specificity) JL_NOTSAFEPOINT
 {
     if (a == b || a == (jl_value_t*)jl_any_type || b == (jl_value_t*)jl_any_type)
