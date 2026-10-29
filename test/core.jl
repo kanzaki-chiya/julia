@@ -9517,6 +9517,23 @@ struct Bar{T}; x::Foo{T, Nothing}; end
 end
 @test fieldtype(LazySuperBound.Bar{LazySuperBound.NewT}, :x) === LazySuperBound.Foo{LazySuperBound.NewT, Nothing}
 
+# A type cached while another one is being built, and which mentions it, is
+# cached only once that one is complete: a failed construction leaves nothing
+# behind that mentions the type it did not make
+module OrphanInProgress
+abstract type A{X, Y} end
+abstract type B{X<:Integer} end
+struct K{T} <: A{Vector{K{T}}, B{T}} end
+end
+let K = OrphanInProgress.K
+    @test_throws TypeError K{String}
+    @test_throws TypeError K{String}
+    tn = Array.body.body.name
+    @test !any(t -> t isa DataType && any(p -> p isa DataType && p.name === K.body.name, t.parameters),
+               [tn.cache..., tn.linearcache...])
+    @test supertype(K{Int}).parameters[1] === Vector{K{Int}}
+end
+
 # A level of a self-referential definition (#61347) is instantiated from a
 # template whose own supertype is deferred. It is a complete type, not part of
 # a definition in progress: its field types are computed with it, and it does
