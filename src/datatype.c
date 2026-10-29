@@ -2847,7 +2847,7 @@ JL_DLLEXPORT jl_value_t *jl_resolve_typegroup(jl_module_t *module, jl_svec_t *ty
     // `typecache_lock` until then, so that every instantiation nested in the
     // resolution, including the lazy ones, finds it.
     jl_deferred_typecache_t dcache;
-    jl_typegroup_region_begin(&dcache);
+    jl_typecache_region_begin(&dcache);
 
     htable_t subst_map;
     htable_new(&subst_map, n);
@@ -3008,7 +3008,7 @@ JL_DLLEXPORT jl_value_t *jl_resolve_typegroup(jl_module_t *module, jl_svec_t *ty
     }
     JL_CATCH {
         htable_free(&subst_map);
-        jl_typegroup_region_end(&dcache, 0);
+        jl_typecache_region_end(&dcache, 0);
         JL_GC_POP();
         jl_rethrow();
     } }
@@ -3109,7 +3109,7 @@ JL_DLLEXPORT jl_value_t *jl_resolve_typegroup(jl_module_t *module, jl_svec_t *ty
         }
     }
     JL_CATCH {
-        jl_typegroup_region_end(&dcache, 0);
+        jl_typecache_region_end(&dcache, 0);
         JL_GC_POP();
         jl_rethrow();
     } }
@@ -3173,7 +3173,7 @@ JL_DLLEXPORT jl_value_t *jl_resolve_typegroup(jl_module_t *module, jl_svec_t *ty
         }
     }
     JL_CATCH {
-        jl_typegroup_region_end(&dcache, 0);
+        jl_typecache_region_end(&dcache, 0);
         JL_GC_POP();
         jl_rethrow();
     } }
@@ -3202,7 +3202,7 @@ JL_DLLEXPORT jl_value_t *jl_resolve_typegroup(jl_module_t *module, jl_svec_t *ty
         }
         htable_free(&discarded);
     }
-    jl_typegroup_region_end(&dcache, 1);
+    jl_typecache_region_end(&dcache, 1);
 
     // Build result tuple
     jl_value_t *result = jl_f_tuple(NULL, results, n);
